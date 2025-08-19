@@ -1,0 +1,102 @@
+name: DIGITAL-RELAY CI/CD (ens_aws_prd)
+
+on:
+  push:
+    branches: [ "deploy/aws_prod" ]
+
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION    : ap-northeast-2
+  ECR_REPOSITORY: ecr-digital-relay
+  DEPLOY_ENV    : latest    # dev 개발환경 배포, prd 운영환경 배포 구분 태그
+
+
+jobs:
+  build:
+    name   : DIGITAL-RELAY CI / CD START  ${{ github.ref_name }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: SOURCE CODE CHECKOUT
+        uses: actions/checkout@v3
+
+      # JDK 설정 (필요한 경우)
+      - name: SET UP JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      # Gradle 빌드
+      - name: Build with Gradle
+        run: ./gradlew :app-relay:clean :app-relay:build
+
+      # PRD용 AWS Credentials 설정
+      - name: Configure AWS Credentials (PRD)
+        if: github.ref_name == 'deploy/aws_prod'
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.ENS_AWS_ACCESS_KEY_PRD }}
+          aws-secret-access-key: ${{ secrets.ENS_AWS_SECRET_ACCESS_KEY_PRD }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # DEV용 AWS Credentials 설정
+      - name: Configure AWS Credentials (DEV)
+        if: github.ref_name == 'ens_aws_dev'
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.ENS_AWS_ACCESS_KEY }}
+          aws-secret-access-key: ${{ secrets.ENS_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+     # ECR 로그인
+      - name: LOGIN TO AMAZON ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      # 이미지 빌드
+      - name: BUILD DOCKER IMAGE WITH DOCKER COMPOSE
+        id: build-image
+        run: docker compose -f docker-compose.yml build app
+
+      # 이미지 리스트
+      - name: LIST DOCKER IMAGES
+        run: docker images
+
+      - name: Run Trivy scan
+        uses: aquasecurity/trivy-action@master
+        id: trivy
+        with:
+            image-ref: 'digital-relay-app:latest'  # 로컬 빌드 이미지 스캔
+            format: 'table'
+            # exit-code: '1'
+            ignore-unfixed: true
+            vuln-type: 'os,library'
+            severity: 'CRITICAL,HIGH'
+            # output: trivy-result.json
+
+      # 도커 컴포즈를 사용하여 이미지 빌드 및 푸시
+      - name: TAG AND PUSH DOCKER IMAGE TO ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ env.DEPLOY_ENV }}
+        run: |
+          docker tag   digital-relay-app:latest $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+      # - name: Send Webhook Notification
+      #   run: |
+      #      GITHUB_ACTOR=${{ github.actor }}
+      #      GITHUB_REPOSITORY=${{ github.repository }}
+      #      GITHUB_REF=${{ github.ref }}
+      #      MESSAGE_CONTENT="✅[DIGITAL-RELAY] main push 🍀🍀🍀\n"
+      #      MESSAGE_CONTENT+="$GITHUB_REPOSITORY\n"
+      #      MESSAGE_CONTENT+="$GITHUB_REF\n"
+      #      MESSAGE_CONTENT+="작업자: $GITHUB_ACTOR\n"
+
+      #      curl -X POST -H "Content-Type: application/json" \
+      #      -d "{\"text\": \"$MESSAGE_CONTENT\"}" \
+      #      https://webexapis.com/v1/webhooks/incoming/Y2lzY29zcGFyazovL3VzL1dFQkhPT0svMzQ1NDZiN2UtY2YyMS00ZWQ4LTllMjYtMDFjNWEzZTYyNDU0
+

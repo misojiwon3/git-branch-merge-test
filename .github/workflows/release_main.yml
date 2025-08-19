@@ -1,0 +1,52 @@
+name: release
+on:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: write   # 태그/릴리스 push에 필요
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history + tags)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set version tag (rel/*)
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 날짜+런번호 (원하면 커밋 수/semver 등으로 바꿔도 됨)
+          TAG="rel/$(date +%Y-%m-%d)-$(printf '%03d' ${GITHUB_RUN_NUMBER})"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Release tag: $TAG"
+
+      - name: Build & test
+        run: ./gradlew clean test build
+
+#      # (선택) 컨테이너 이미지 빌드/푸시
+#      - name: Build & push image
+#        env:
+#          REG: ghcr.io/OWNER/REPO       # ← 본인 레지스트리로 교체
+#          TAG: ${{ steps.ver.outputs.tag }}
+#        run: |
+#          docker build -t "$REG:${TAG//\//-}" .
+#          docker push "$REG:${TAG//\//-}"
+#
+#      - name: Create annotated tag
+#        run: |
+#          git config user.name  "github-actions[bot]"
+#          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+#          git tag -a "${{ steps.ver.outputs.tag }}" -m "Release ${{ steps.ver.outputs.tag }}"
+#          git push origin "${{ steps.ver.outputs.tag }}"
+#
+#      # (선택) GitHub Release 노트
+#      - name: Create GitHub Release
+#        uses: softprops/action-gh-release@v2
+#        with:
+#          tag_name: ${{ steps.ver.outputs.tag }}
+#          generate_release_notes: true
