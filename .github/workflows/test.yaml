@@ -1,0 +1,51 @@
+# .github/workflows/move-pointer.yml
+name: Move ENV/current pointer (no CLI needed)
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "Target env"
+        type: choice
+        options: [ r7_lab, ad, ap ]
+        required: true
+      rel_tag:
+        description: "rel/* to point to (e.g., rel/2025-08-21-001)"
+        required: true
+      notes:
+        description: "Reason (optional)"
+        required: false
+
+permissions:
+  contents: write   # 태그 푸시에 필요
+
+jobs:
+  move:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (tags + history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Validate rel exists
+        run: |
+          set -euo pipefail
+          REL="${{ inputs.rel_tag }}"
+          git rev-parse -q --verify "refs/tags/${REL}" >/dev/null \
+            || { echo "::error::No such rel tag: ${REL}"; exit 1; }
+
+      - name: Move pointer tag (force)
+        run: |
+          set -euo pipefail
+          POINTER="${{ inputs.env }}/current"
+          TARGET="${{ inputs.rel_tag }}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f -a "$POINTER" "$TARGET" -m "Promote $POINTER -> $TARGET | ${{ inputs.notes }}"
+          git push -f origin "refs/tags/$POINTER"
+
+      - name: Summary
+        run: |
+          echo "✅ ${{ inputs.env }}/current → ${{ inputs.rel_tag }}"
